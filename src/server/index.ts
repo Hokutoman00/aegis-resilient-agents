@@ -9,6 +9,7 @@ import { logger } from 'hono/logger';
 import type OpenAI from 'openai';
 import { classifyError, pickFallbackTarget } from '../aegis/l4-semantic.js';
 import { buildGracefulResponse } from '../aegis/l5-contract.js';
+import { getChaosState, startChaosScheduler } from '../aegis/l6-chaos.js';
 import { getDefaultVirtualModel, getTFClient } from '../aegis/tf-client.js';
 import type { ProviderError } from '../aegis/types.js';
 import { getEnv } from '../config.js';
@@ -43,8 +44,11 @@ app.get('/health', (c) => {
 // Forwards via TF AI Gateway. L1/L2/L3 resilience happens inside TF per the
 // configured Virtual Model. Aegis adds: Receipt construction (always), and in
 // subsequent commits L0 hedge, L4 semantic error, L5 contract, L6 chaos.
+app.get('/v1/chaos/status', (c) => c.json(getChaosState()));
+
 app.post('/v1/chat/completions', async (c) => {
   const receipt = new ReceiptBuilder();
+  receipt.setL6Chaos(getChaosState()); // attach freshness signal to every receipt
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
 
   if (!body || !Array.isArray(body.messages)) {
@@ -174,6 +178,12 @@ function parseError(err: unknown): ProviderError {
 
 console.log(`[aegis] listening on http://localhost:${env.PORT}`);
 console.log(`[aegis] virtual model: ${getDefaultVirtualModel()}`);
+
+// Start L6 self-chaos scheduler. Drill every 30s with a rotating scenario.
+// In production this would be Toxiproxy-injected; v0 uses synthetic drills
+// against the L4 classifier (see src/aegis/l6-chaos.ts).
+startChaosScheduler(30_000);
+console.log('[aegis] L6 self-chaos scheduler started (30s interval)');
 
 export default {
   port: env.PORT,

@@ -5,6 +5,7 @@
 import { ulid } from 'ulid';
 import type { L4Match } from '../aegis/l4-semantic.js';
 import type { L5ContractRecord } from '../aegis/l5-contract.js';
+import type { L6ChaosRecord } from '../aegis/l6-chaos.js';
 import type { LayerFired, ProviderTry } from '../aegis/types.js';
 
 export interface ReceiptV0 {
@@ -17,6 +18,7 @@ export interface ReceiptV0 {
   cost_usd_total: number;
   l4_semantic?: L4Match;
   l5_contract?: L5ContractRecord;
+  l6_chaos?: L6ChaosRecord;
 }
 
 export interface ReceiptDraft {
@@ -35,6 +37,7 @@ export class ReceiptBuilder {
   private cost_usd_total = 0;
   private l4_semantic: L4Match | undefined;
   private l5_contract: L5ContractRecord | undefined;
+  private l6_chaos: L6ChaosRecord | undefined;
 
   constructor(draft: ReceiptDraft = {}) {
     this.request_id = draft.request_id ?? ulid();
@@ -70,6 +73,13 @@ export class ReceiptBuilder {
     this.layers_fired.add('L5');
   }
 
+  setL6Chaos(record: L6ChaosRecord): void {
+    this.l6_chaos = record;
+    // L6 fires on every response (read-only attachment); we don't add it to
+    // layers_fired unless chaos was actually injected into this request.
+    if (record.shadow_injected_this_request) this.layers_fired.add('L6');
+  }
+
   getStartedAt(): Date {
     return this.started_at;
   }
@@ -94,6 +104,7 @@ export class ReceiptBuilder {
     };
     if (this.l4_semantic) out.l4_semantic = this.l4_semantic;
     if (this.l5_contract) out.l5_contract = this.l5_contract;
+    if (this.l6_chaos) out.l6_chaos = this.l6_chaos;
     return out;
   }
 }
