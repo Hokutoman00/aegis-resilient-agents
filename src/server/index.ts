@@ -7,6 +7,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import type OpenAI from 'openai';
+import { hedgedChatCompletion } from '../aegis/l0-hedge.js';
 import { classifyError, pickFallbackTarget } from '../aegis/l4-semantic.js';
 import { buildGracefulResponse } from '../aegis/l5-contract.js';
 import { getChaosState, startChaosScheduler } from '../aegis/l6-chaos.js';
@@ -87,14 +88,63 @@ app.post('/v1/chat/completions', async (c) => {
     stream: false,
   };
 
-  // Attempt loop: primary call, then up to 2 L4-driven fallback attempts.
+  // L0 hedge — fire a duplicate to an alternate model after a latency threshold.
+  // Opt-in per request via the `x-aegis-hedge` body field (object or "true"
+  // shorthand). Off by default to keep behavior predictable; demo scenarios
+  // pass `x-aegis-hedge: { hedge_model: ..., hedge_after_ms: 1500 }`.
+  const hedgeOpt = (body as Record<string, unknown>)['x-aegis-hedge'];
+  let hedgeInitial: OpenAI.ChatCompletion | undefined;
+  let hedgeInitialError: ProviderError | undefined;
   const triedModels = new Set<string>();
-  let currentModel = requestedModel;
-  let lastError: ProviderError | undefined;
-  let success: OpenAI.ChatCompletion | undefined;
-  const MAX_L4_FALLBACKS = 2;
 
-  for (let attempt = 0; attempt <= MAX_L4_FALLBACKS; attempt += 1) {
+  if (hedgeOpt) {
+    const config = typeof hedgeOpt === 'object' ? (hedgeOpt as Record<string, unknown>) : {};
+    const hedgeModel =
+      typeof config.hedge_model === 'string'
+        ? config.hedge_model
+        : (pickFallbackTarget(requestedModel, new Set([requestedModel])) ?? 'openai/gpt-4.1-mini');
+    const hedgeAfterMs = typeof config.hedge_after_ms === 'number' ? config.hedge_after_ms : 1500;
+
+    const result = await hedgedChatCompletion(
+      { primaryModel: requestedModel, hedgeModel, hedgeAfterMs },
+      baseParams,
+      tf,
+    );
+    receipt.recordProvider(result.primaryAttempt);
+    triedModels.add(requestedModel);
+    if (result.hedgeAttempt) {
+      receipt.recordProvider(result.hedgeAttempt);
+      triedModels.add(hedgeModel);
+    }
+    receipt.setL0Hedge(result.record);
+    receipt.fired('L1');
+    if (result.response) {
+      hedgeInitial = result.response;
+    } else {
+      hedgeInitialError = result.lastError;
+    }
+  }
+
+  // Standard attempt loop continues from here (or starts here if no hedge).
+  // Primary call (if hedge didn't already run), then up to 2 L4-driven fallback attempts.
+  let currentModel = requestedModel;
+  let lastError: ProviderError | undefined = hedgeInitialError;
+  let success: OpenAI.ChatCompletion | undefined = hedgeInitial;
+  const MAX_L4_FALLBACKS = 2;
+  const startingAttempt = hedgeOpt ? 1 : 0;
+
+  // If hedge completed with success, skip the loop. Otherwise classify the
+  // hedge's lastError via L4 and possibly continue with a different alternate.
+  if (!success && hedgeInitialError) {
+    const match = classifyError(hedgeInitialError, requestedModel);
+    if (match?.action_taken === 'fallback_provider') {
+      receipt.setL4Match(match);
+      const next = pickFallbackTarget(currentModel, triedModels);
+      if (next) currentModel = next;
+    }
+  }
+
+  for (let attempt = startingAttempt; attempt <= MAX_L4_FALLBACKS && !success; attempt += 1) {
     triedModels.add(currentModel);
     const startedAt = Date.now();
     try {

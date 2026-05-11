@@ -3,6 +3,7 @@
 // l5_contract / tf_health / mcp_calls / l6_chaos.
 
 import { ulid } from 'ulid';
+import type { HedgeRecord } from '../aegis/l0-hedge.js';
 import type { L4Match } from '../aegis/l4-semantic.js';
 import type { L5ContractRecord } from '../aegis/l5-contract.js';
 import type { L6ChaosRecord } from '../aegis/l6-chaos.js';
@@ -16,6 +17,7 @@ export interface ReceiptV0 {
   providers_tried: ProviderTry[];
   layers_fired: LayerFired[];
   cost_usd_total: number;
+  l0_hedge?: HedgeRecord;
   l4_semantic?: L4Match;
   l5_contract?: L5ContractRecord;
   l6_chaos?: L6ChaosRecord;
@@ -35,6 +37,7 @@ export class ReceiptBuilder {
   private readonly providers_tried: ProviderTry[] = [];
   private readonly layers_fired: Set<LayerFired> = new Set();
   private cost_usd_total = 0;
+  private l0_hedge: HedgeRecord | undefined;
   private l4_semantic: L4Match | undefined;
   private l5_contract: L5ContractRecord | undefined;
   private l6_chaos: L6ChaosRecord | undefined;
@@ -57,6 +60,14 @@ export class ReceiptBuilder {
 
   addCost(usd: number): void {
     this.cost_usd_total += usd;
+  }
+
+  setL0Hedge(record: HedgeRecord): void {
+    this.l0_hedge = record;
+    if (record.fired) {
+      this.layers_fired.add('L0');
+      this.cost_usd_total += record.extra_cost_usd;
+    }
   }
 
   setL4Match(match: L4Match): void {
@@ -102,6 +113,7 @@ export class ReceiptBuilder {
       layers_fired: [...this.layers_fired],
       cost_usd_total: Math.round(this.cost_usd_total * 1e6) / 1e6,
     };
+    if (this.l0_hedge) out.l0_hedge = this.l0_hedge;
     if (this.l4_semantic) out.l4_semantic = this.l4_semantic;
     if (this.l5_contract) out.l5_contract = this.l5_contract;
     if (this.l6_chaos) out.l6_chaos = this.l6_chaos;
