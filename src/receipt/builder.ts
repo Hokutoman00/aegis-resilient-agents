@@ -4,6 +4,7 @@
 
 import { ulid } from 'ulid';
 import type { L4Match } from '../aegis/l4-semantic.js';
+import type { L5ContractRecord } from '../aegis/l5-contract.js';
 import type { LayerFired, ProviderTry } from '../aegis/types.js';
 
 export interface ReceiptV0 {
@@ -15,6 +16,7 @@ export interface ReceiptV0 {
   layers_fired: LayerFired[];
   cost_usd_total: number;
   l4_semantic?: L4Match;
+  l5_contract?: L5ContractRecord;
 }
 
 export interface ReceiptDraft {
@@ -32,6 +34,7 @@ export class ReceiptBuilder {
   private readonly layers_fired: Set<LayerFired> = new Set();
   private cost_usd_total = 0;
   private l4_semantic: L4Match | undefined;
+  private l5_contract: L5ContractRecord | undefined;
 
   constructor(draft: ReceiptDraft = {}) {
     this.request_id = draft.request_id ?? ulid();
@@ -56,6 +59,23 @@ export class ReceiptBuilder {
   setL4Match(match: L4Match): void {
     this.l4_semantic = match;
     this.layers_fired.add('L4');
+    // Backfill message_class on the most recently recorded provider error so
+    // downstream layers (e.g. L5) can synthesize a meaningful explanation.
+    const last = this.providers_tried.at(-1);
+    if (last?.error) last.error.message_class = match.message_class;
+  }
+
+  setL5Contract(record: L5ContractRecord): void {
+    this.l5_contract = record;
+    this.layers_fired.add('L5');
+  }
+
+  getStartedAt(): Date {
+    return this.started_at;
+  }
+
+  getProviders(): ProviderTry[] {
+    return [...this.providers_tried];
   }
 
   getRequestId(): string {
@@ -73,6 +93,7 @@ export class ReceiptBuilder {
       cost_usd_total: Math.round(this.cost_usd_total * 1e6) / 1e6,
     };
     if (this.l4_semantic) out.l4_semantic = this.l4_semantic;
+    if (this.l5_contract) out.l5_contract = this.l5_contract;
     return out;
   }
 }

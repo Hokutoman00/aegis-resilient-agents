@@ -8,8 +8,9 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import type OpenAI from 'openai';
 import { classifyError, pickFallbackTarget } from '../aegis/l4-semantic.js';
+import { buildGracefulResponse } from '../aegis/l5-contract.js';
 import { getDefaultVirtualModel, getTFClient } from '../aegis/tf-client.js';
-import type { ProviderError, ProviderTry } from '../aegis/types.js';
+import type { ProviderError } from '../aegis/types.js';
 import { getEnv } from '../config.js';
 import { ReceiptBuilder } from '../receipt/builder.js';
 
@@ -126,7 +127,7 @@ app.post('/v1/chat/completions', async (c) => {
       // L4 — classify the error and decide whether to retry with an alternate.
       const match = classifyError(error, currentModel);
       if (match) {
-        receipt.setL4Match(match);
+        receipt.setL4Match(match); // also backfills message_class on the last provider entry
         if (match.action_taken === 'fallback_provider' && attempt < MAX_L4_FALLBACKS) {
           const target = pickFallbackTarget(currentModel, triedModels);
           if (target) {
@@ -143,20 +144,17 @@ app.post('/v1/chat/completions', async (c) => {
     return c.json({ ...success, _aegis_receipt: receipt.build() });
   }
 
-  // L5 graceful degradation lands in a subsequent commit. For now we surface
-  // the final upstream error along with the full Receipt — judges and
-  // operators can see every attempt + the L4 classification.
-  return c.json(
-    {
-      error: {
-        type: lastError?.type ?? 'upstream_error',
-        message: lastError?.raw_message ?? 'all attempts failed',
-        status: lastError?.status,
-      },
-      _aegis_receipt: receipt.build(),
-    },
-    (lastError?.status ?? 502) as never,
-  );
+  // L5 — every viable path failed. Synthesize a graceful, honest response
+  // instead of propagating a raw upstream error. The Receipt records the full
+  // attempt chain plus the L5 degradation reason.
+  const { completion, l5 } = buildGracefulResponse({
+    requestId: receipt.getRequestId(),
+    providersTried: receipt.getProviders(),
+    startedAt: receipt.getStartedAt(),
+  });
+  receipt.setL5Contract(l5);
+
+  return c.json({ ...completion, _aegis_receipt: receipt.build() });
 });
 
 function parseError(err: unknown): ProviderError {
