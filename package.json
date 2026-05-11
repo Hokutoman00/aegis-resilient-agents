@@ -1,0 +1,38 @@
+{
+  "name": "aegis",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "A resilient AI agent runtime — hedge first, fallback second, continuously chaos-verified. DevNetwork AI/ML Hackathon 2026 / TrueFoundry challenge.",
+  "scripts": {
+    "dev": "bun run --watch src/server/index.ts",
+    "start": "bun run src/server/index.ts",
+    "build": "bun build ./src/server/index.ts --outdir dist --target bun",
+    "test": "bun test",
+    "test:integration": "bun test tests/integration",
+    "test:chaos": "bun test tests/chaos",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "typecheck": "tsc --noEmit",
+    "chaos:demo": "bun run src/chaos/scenarios.ts"
+  },
+  "dependencies": {
+    "openai": "^5.0.0",
+    "@openai/agents": "^0.1.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "hono": "^4.6.0",
+    "zod": "^3.24.0",
+    "ulid": "^2.3.0",
+    "p-retry": "^6.2.0",
+    "p-timeout": "^6.1.4",
+    "toxiproxy-node-client": "^2.0.6"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0",
+    "@biomejs/biome": "^1.9.0"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  }
+}
