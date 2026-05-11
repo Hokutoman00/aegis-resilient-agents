@@ -3,6 +3,7 @@
 // l5_contract / tf_health / mcp_calls / l6_chaos.
 
 import { ulid } from 'ulid';
+import type { L4Match } from '../aegis/l4-semantic.js';
 import type { LayerFired, ProviderTry } from '../aegis/types.js';
 
 export interface ReceiptV0 {
@@ -13,6 +14,7 @@ export interface ReceiptV0 {
   providers_tried: ProviderTry[];
   layers_fired: LayerFired[];
   cost_usd_total: number;
+  l4_semantic?: L4Match;
 }
 
 export interface ReceiptDraft {
@@ -29,6 +31,7 @@ export class ReceiptBuilder {
   private readonly providers_tried: ProviderTry[] = [];
   private readonly layers_fired: Set<LayerFired> = new Set();
   private cost_usd_total = 0;
+  private l4_semantic: L4Match | undefined;
 
   constructor(draft: ReceiptDraft = {}) {
     this.request_id = draft.request_id ?? ulid();
@@ -50,12 +53,17 @@ export class ReceiptBuilder {
     this.cost_usd_total += usd;
   }
 
+  setL4Match(match: L4Match): void {
+    this.l4_semantic = match;
+    this.layers_fired.add('L4');
+  }
+
   getRequestId(): string {
     return this.request_id;
   }
 
   build(): ReceiptV0 {
-    return {
+    const out: ReceiptV0 = {
       version: 'aegis-v3.0',
       request_id: this.request_id,
       started_at: this.started_at.toISOString(),
@@ -64,5 +72,7 @@ export class ReceiptBuilder {
       layers_fired: [...this.layers_fired],
       cost_usd_total: Math.round(this.cost_usd_total * 1e6) / 1e6,
     };
+    if (this.l4_semantic) out.l4_semantic = this.l4_semantic;
+    return out;
   }
 }
