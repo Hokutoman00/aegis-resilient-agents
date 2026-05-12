@@ -6,13 +6,14 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
+import { streamSSE } from 'hono/streaming';
 import type OpenAI from 'openai';
 import { hedgedChatCompletion } from '../aegis/l0-hedge.js';
 import { classifyError, pickFallbackTarget } from '../aegis/l4-semantic.js';
 import { buildGracefulResponse } from '../aegis/l5-contract.js';
 import { getChaosState, startChaosScheduler } from '../aegis/l6-chaos.js';
 import { getDefaultVirtualModel, getTFClient } from '../aegis/tf-client.js';
-import { callWithSpofBypass } from '../aegis/tf-spof.js';
+import { callWithSpofBypass, isInfrastructureError } from '../aegis/tf-spof.js';
 import type { ProviderError } from '../aegis/types.js';
 import { getEnv } from '../config.js';
 import { ReceiptBuilder } from '../receipt/builder.js';
@@ -66,24 +67,89 @@ app.post('/v1/chat/completions', async (c) => {
   const requestedModel =
     typeof body.model === 'string' && body.model.length > 0 ? body.model : getDefaultVirtualModel();
 
-  // For now we ignore streaming. Streaming support arrives with the hedge
-  // (L0) commit since hedging two streams in parallel changes the request
-  // lifecycle materially.
-  const streamRequested = Boolean(body.stream);
-  if (streamRequested) {
-    return c.json(
-      {
-        error: {
-          type: 'not_implemented',
-          message: 'stream=true arrives with the L0 hedge commit. Set stream=false for now.',
-        },
-        _aegis_receipt: receipt.build(),
-      },
-      501,
-    );
-  }
-
   const tf = getTFClient();
+  const streamRequested = Boolean(body.stream);
+
+  // ── Streaming path ────────────────────────────────────────────────────
+  // SSE response. Each upstream chunk is forwarded as a `data:` event; after
+  // the stream completes (success or failure), Aegis emits a custom
+  // `aegis.receipt` event with the full Receipt, then `data: [DONE]` per the
+  // OpenAI streaming convention. v0 streaming skips L0 hedge and L4
+  // cascade retries — those re-enter the lifecycle in non-streaming mode.
+  if (streamRequested) {
+    return streamSSE(c, async (stream) => {
+      const startedAt = Date.now();
+      let firstChunkAt: number | null = null;
+      let providerModel: string | undefined;
+      let outputTokens = 0;
+
+      try {
+        const tfStream = await tf.chat.completions.create({
+          ...(body as Omit<OpenAI.ChatCompletionCreateParamsStreaming, 'stream'>),
+          model: requestedModel,
+          stream: true,
+        });
+
+        for await (const chunk of tfStream) {
+          if (firstChunkAt === null) firstChunkAt = Date.now();
+          if (!providerModel) providerModel = chunk.model;
+          if (chunk.choices?.[0]?.delta?.content) outputTokens += 1;
+          await stream.writeSSE({ data: JSON.stringify(chunk) });
+        }
+
+        const totalMs = Date.now() - startedAt;
+        receipt.recordProvider({
+          name: providerModel ?? requestedModel,
+          via: 'tf',
+          outcome: 'success',
+          ttft_ms: firstChunkAt ? firstChunkAt - startedAt : null,
+          total_ms: totalMs,
+          tokens: { input: 0, output: outputTokens },
+        });
+        receipt.fired('L1');
+        receipt.setTFHealth({ reachable: true, bypass_used: false });
+      } catch (err) {
+        const totalMs = Date.now() - startedAt;
+        const error = parseError(err);
+        const bypass = isInfrastructureError(err);
+        receipt.recordProvider({
+          name: providerModel ?? requestedModel,
+          via: 'tf',
+          outcome: 'error',
+          error,
+          ttft_ms: firstChunkAt ? firstChunkAt - startedAt : null,
+          total_ms: totalMs,
+        });
+        receipt.setTFHealth({ reachable: !bypass, bypass_used: bypass });
+
+        // L4 classification in stream mode is informational only; we don't
+        // restart the stream on a different model. Client can retry without
+        // stream=true to get the full L4 cascade + L5 graceful path.
+        const match = classifyError(error, providerModel ?? requestedModel);
+        if (match) receipt.setL4Match(match);
+
+        // Surface error as a custom event so OpenAI-compat clients don't
+        // mistake it for a chunk.
+        await stream.writeSSE({
+          event: 'aegis.error',
+          data: JSON.stringify({
+            type: error.type ?? 'upstream_error',
+            message: error.raw_message ?? 'streaming failed',
+            status: error.status,
+            advice: 'retry without stream=true to engage the L4 cascade + L5 graceful response',
+          }),
+        });
+      }
+
+      // Receipt as the final domain event, then the OpenAI sentinel.
+      await stream.writeSSE({
+        event: 'aegis.receipt',
+        data: JSON.stringify(receipt.build()),
+      });
+      await stream.writeSSE({ data: '[DONE]' });
+    });
+  }
+  // ── End streaming path ───────────────────────────────────────────────
   const baseParams: Omit<OpenAI.ChatCompletionCreateParamsNonStreaming, 'model'> = {
     ...(body as Omit<OpenAI.ChatCompletionCreateParamsNonStreaming, 'model' | 'stream'>),
     stream: false,
