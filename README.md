@@ -67,11 +67,38 @@ cp .env.example .env.local
 
 bun run dev
 # server: http://localhost:3000
-# health: http://localhost:3000/health
-# chat:   POST /v1/chat/completions  (OpenAI-compatible)
+
+# exercise every layer in one shot
+bash examples/demo.sh
 ```
 
-The `/v1/chat/completions` endpoint is OpenAI SDK-compatible. Drop-in for any code already using the OpenAI SDK — just point `base_url` at Aegis instead of `api.openai.com`.
+`/v1/chat/completions` is OpenAI SDK-compatible (non-streaming and SSE
+streaming both). Drop-in for any code already using the OpenAI SDK — just
+point `base_url` at Aegis instead of `api.openai.com`.
+
+### Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/` | identity / motto / configured virtual model |
+| `GET` | `/health` | uptime probe |
+| `POST` | `/v1/chat/completions` | OpenAI-compat chat (stream + non-stream) |
+| `POST` | `/v1/mcp/classify` | classify a tool name (READ_HEDGE / WRITE_TIED / UNKNOWN_TIED) |
+| `POST` | `/v1/mcp/call` | execute a tool with classification-aware resilience |
+| `GET` | `/v1/chaos/status` | latest L6 chaos drill outcome |
+
+### Tests
+
+```bash
+bun test
+# 50 tests, 0 fail, ~150 assertions, <1s
+```
+
+Lint / typecheck:
+
+```bash
+bun run lint && bun run typecheck
+```
 
 ## Tech stack
 
