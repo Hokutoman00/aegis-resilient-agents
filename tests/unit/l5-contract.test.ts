@@ -72,10 +72,14 @@ describe('L5 buildGracefulResponse', () => {
   });
 
   test('handles empty failure classes (unclassified upstream)', () => {
-    const input = baseInput();
-    for (const p of input.providersTried) {
-      if (p.error) p.error.message_class = undefined;
-    }
+    const base = baseInput();
+    const input = {
+      ...base,
+      providersTried: base.providersTried.map((p) => ({
+        ...p,
+        error: p.error ? { status: p.error.status, raw_message: p.error.raw_message } : p.error,
+      })),
+    };
     const { completion, l5 } = buildGracefulResponse(input);
     expect(l5.degradation_reason).toContain('unclassified');
     expect(completion.choices[0]?.message.content).toContain('upstream errors');

@@ -100,26 +100,23 @@ describe('L4 pickFallbackTarget', () => {
   });
 
   test('openai source picks first anthropic target', () => {
-    const target = pickFallbackTarget(
-      'openai/gpt-4.1-mini',
-      new Set(['openai/gpt-4.1-mini']),
-    );
+    const target = pickFallbackTarget('openai/gpt-4.1-mini', new Set(['openai/gpt-4.1-mini']));
     expect(target).toBe(DEFAULT_FALLBACK_TARGETS.openai[0]);
   });
 
   test('skips already-tried targets', () => {
-    const tried = new Set([
+    const tried = new Set<string>([
       'anthropic/claude-sonnet-4-5',
-      DEFAULT_FALLBACK_TARGETS.anthropic[0],
+      DEFAULT_FALLBACK_TARGETS.anthropic[0] as string,
     ]);
     const target = pickFallbackTarget('anthropic/claude-sonnet-4-5', tried);
-    expect(target).toBe(DEFAULT_FALLBACK_TARGETS.anthropic[1]);
+    expect(target).toBe(DEFAULT_FALLBACK_TARGETS.anthropic[1] as string);
   });
 
   test('returns null when all targets exhausted', () => {
     const tried = new Set<string>([
       'anthropic/claude-sonnet-4-5',
-      ...DEFAULT_FALLBACK_TARGETS.anthropic,
+      ...(DEFAULT_FALLBACK_TARGETS.anthropic as readonly string[]),
     ]);
     const target = pickFallbackTarget('anthropic/claude-sonnet-4-5', tried);
     expect(target).toBeNull();
@@ -127,6 +124,7 @@ describe('L4 pickFallbackTarget', () => {
 
   test('unknown source falls back to the generic target list', () => {
     const target = pickFallbackTarget('cohere/command-r', new Set());
-    expect(DEFAULT_FALLBACK_TARGETS.unknown).toContain(target as string);
+    const unknownTargets: readonly string[] = DEFAULT_FALLBACK_TARGETS.unknown;
+    expect(unknownTargets).toContain(target as string);
   });
 });

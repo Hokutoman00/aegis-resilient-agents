@@ -49,6 +49,33 @@ app.get('/health', (c) => {
 // subsequent commits L0 hedge, L4 semantic error, L5 contract, L6 chaos.
 app.get('/v1/chaos/status', (c) => c.json(getChaosState()));
 
+// MCP tool classification probe. Useful for verifying the convention works
+// for a given tool definition before wiring it to a hedge / tied execution.
+//
+// POST /v1/mcp/classify
+// body: { name: "search_web", "x-aegis-idempotent"?: true|false }
+app.post('/v1/mcp/classify', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!body || typeof body.name !== 'string') {
+    return c.json(
+      { error: { type: 'invalid_request_error', message: 'name (string) required' } },
+      400,
+    );
+  }
+  const { classifyTool, hedgePolicyFor } = await import('../mcp/classifier.js');
+  const classification = classifyTool({
+    name: body.name,
+    'x-aegis-idempotent':
+      typeof body['x-aegis-idempotent'] === 'boolean'
+        ? (body['x-aegis-idempotent'] as boolean)
+        : undefined,
+  });
+  return c.json({
+    classification,
+    policy: hedgePolicyFor(classification.klass),
+  });
+});
+
 app.post('/v1/chat/completions', async (c) => {
   const receipt = new ReceiptBuilder();
   receipt.setL6Chaos(getChaosState()); // attach freshness signal to every receipt
