@@ -49,6 +49,67 @@ app.get('/health', (c) => {
 // subsequent commits L0 hedge, L4 semantic error, L5 contract, L6 chaos.
 app.get('/v1/chaos/status', (c) => c.json(getChaosState()));
 
+// MCP tool execution with classification-aware resilience.
+// POST /v1/mcp/call
+// body: { tool: { name, "x-aegis-idempotent"? }, args: {...},
+//         primary?: { name, latency_ms, fail_rate?, fixed_failure? },
+//         secondary?: { name, latency_ms, fail_rate?, fixed_failure? } }
+// If primary/secondary blocks are omitted, default mock callers are used so
+// the demo path always works. In a real deployment these would be HTTP
+// clients pointing at registered MCP servers.
+app.post('/v1/mcp/call', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!body || typeof body.tool !== 'object' || body.tool === null) {
+    return c.json(
+      { error: { type: 'invalid_request_error', message: 'tool (object) required' } },
+      400,
+    );
+  }
+  const tool = body.tool as { name: string; 'x-aegis-idempotent'?: boolean };
+  if (typeof tool.name !== 'string') {
+    return c.json({ error: { type: 'invalid_request_error', message: 'tool.name required' } }, 400);
+  }
+  const args = (body.args ?? {}) as Record<string, unknown>;
+
+  const { makeMockCaller } = await import('../mcp/mock-caller.js');
+  const { executeMCPCall } = await import('../mcp/hedge.js');
+
+  const primaryCfg = (body.primary as Record<string, unknown>) ?? {
+    name: 'primary',
+    latency_ms: 50,
+  };
+  const secondaryCfg = (body.secondary as Record<string, unknown>) ?? {
+    name: 'backup',
+    latency_ms: 100,
+  };
+  const primary = makeMockCaller({
+    name: String(primaryCfg.name ?? 'primary'),
+    latency_ms: Number(primaryCfg.latency_ms ?? 50),
+    fail_rate: typeof primaryCfg.fail_rate === 'number' ? primaryCfg.fail_rate : undefined,
+    fixed_failure:
+      typeof primaryCfg.fixed_failure === 'string' ? primaryCfg.fixed_failure : undefined,
+  });
+  const secondary = makeMockCaller({
+    name: String(secondaryCfg.name ?? 'backup'),
+    latency_ms: Number(secondaryCfg.latency_ms ?? 100),
+    fail_rate: typeof secondaryCfg.fail_rate === 'number' ? secondaryCfg.fail_rate : undefined,
+    fixed_failure:
+      typeof secondaryCfg.fixed_failure === 'string' ? secondaryCfg.fixed_failure : undefined,
+  });
+
+  const out = await executeMCPCall(
+    { tool, args },
+    {
+      primary,
+      secondary,
+      primaryName: String(primaryCfg.name ?? 'primary'),
+      secondaryName: String(secondaryCfg.name ?? 'backup'),
+      tied_timeout_ms: typeof body.tied_timeout_ms === 'number' ? body.tied_timeout_ms : 2_000,
+    },
+  );
+  return c.json(out);
+});
+
 // MCP tool classification probe. Useful for verifying the convention works
 // for a given tool definition before wiring it to a hedge / tied execution.
 //
