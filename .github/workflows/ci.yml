@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Unit tests
+        run: bun test tests/unit
+
+      - name: Server boot smoke
+        env:
+          TRUEFOUNDRY_API_KEY: smoke-test-not-real
+          TRUEFOUNDRY_OPENAI_BASE: https://example.invalid/v1
+        run: |
+          PORT=3000 bun run src/server/index.ts &
+          PID=$!
+          # Give the server up to 10s to bind.
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            sleep 1
+            if curl -sf http://localhost:3000/health > /dev/null; then
+              echo "[smoke] /health responded"
+              kill $PID
+              exit 0
+            fi
+          done
+          echo "[smoke] server did not bind in 10s"
+          kill $PID || true
+          exit 1

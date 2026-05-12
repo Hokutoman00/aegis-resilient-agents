@@ -2,6 +2,7 @@
 
 [![Hackathon](https://img.shields.io/badge/DevNetwork_AI%2FML_Hackathon-2026-blue)](https://devnetwork-ai-ml-hack-2026.devpost.com/)
 [![Challenge](https://img.shields.io/badge/TrueFoundry-Resilient_Agents-orange)](https://devnetwork-ai-ml-hack-2026.devpost.com/)
+[![Tests](https://img.shields.io/badge/tests-50%20passing-brightgreen)](./tests/unit)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 > **Hedge first, fallback second, continuously chaos-verified.**
