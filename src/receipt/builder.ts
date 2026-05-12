@@ -7,7 +7,7 @@ import type { HedgeRecord } from '../aegis/l0-hedge.js';
 import type { L4Match } from '../aegis/l4-semantic.js';
 import type { L5ContractRecord } from '../aegis/l5-contract.js';
 import type { L6ChaosRecord } from '../aegis/l6-chaos.js';
-import type { LayerFired, ProviderTry } from '../aegis/types.js';
+import type { LayerFired, ProviderTry, TFHealthRecord } from '../aegis/types.js';
 
 export interface ReceiptV0 {
   version: 'aegis-v3.0';
@@ -21,6 +21,7 @@ export interface ReceiptV0 {
   l4_semantic?: L4Match;
   l5_contract?: L5ContractRecord;
   l6_chaos?: L6ChaosRecord;
+  tf_health?: TFHealthRecord;
 }
 
 export interface ReceiptDraft {
@@ -41,6 +42,7 @@ export class ReceiptBuilder {
   private l4_semantic: L4Match | undefined;
   private l5_contract: L5ContractRecord | undefined;
   private l6_chaos: L6ChaosRecord | undefined;
+  private tf_health: TFHealthRecord = { reachable: true, bypass_used: false };
 
   constructor(draft: ReceiptDraft = {}) {
     this.request_id = draft.request_id ?? ulid();
@@ -91,6 +93,12 @@ export class ReceiptBuilder {
     if (record.shadow_injected_this_request) this.layers_fired.add('L6');
   }
 
+  setTFHealth(record: TFHealthRecord): void {
+    this.tf_health = record;
+    // Bypass means L3 fall-through fired — surface it as a layer.
+    if (record.bypass_used) this.layers_fired.add('L3');
+  }
+
   getStartedAt(): Date {
     return this.started_at;
   }
@@ -117,6 +125,7 @@ export class ReceiptBuilder {
     if (this.l4_semantic) out.l4_semantic = this.l4_semantic;
     if (this.l5_contract) out.l5_contract = this.l5_contract;
     if (this.l6_chaos) out.l6_chaos = this.l6_chaos;
+    out.tf_health = this.tf_health;
     return out;
   }
 }

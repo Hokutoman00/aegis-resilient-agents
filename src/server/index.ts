@@ -12,6 +12,7 @@ import { classifyError, pickFallbackTarget } from '../aegis/l4-semantic.js';
 import { buildGracefulResponse } from '../aegis/l5-contract.js';
 import { getChaosState, startChaosScheduler } from '../aegis/l6-chaos.js';
 import { getDefaultVirtualModel, getTFClient } from '../aegis/tf-client.js';
+import { callWithSpofBypass } from '../aegis/tf-spof.js';
 import type { ProviderError } from '../aegis/types.js';
 import { getEnv } from '../config.js';
 import { ReceiptBuilder } from '../receipt/builder.js';
@@ -144,55 +145,55 @@ app.post('/v1/chat/completions', async (c) => {
     }
   }
 
+  let bypassUsedAny = false;
+
   for (let attempt = startingAttempt; attempt <= MAX_L4_FALLBACKS && !success; attempt += 1) {
     triedModels.add(currentModel);
-    const startedAt = Date.now();
-    try {
-      const response = await tf.chat.completions.create({
-        ...baseParams,
-        model: currentModel,
-      });
-      const totalMs = Date.now() - startedAt;
-      const usage = response.usage;
+    const result = await callWithSpofBypass(tf, { ...baseParams, model: currentModel });
+    if (result.bypassed) bypassUsedAny = true;
+
+    if (result.response) {
+      const usage = result.response.usage;
       receipt.recordProvider({
-        name: response.model ?? currentModel,
-        via: 'tf',
+        name: result.response.model ?? currentModel,
+        via: result.via,
         outcome: 'success',
         ttft_ms: null,
-        total_ms: totalMs,
+        total_ms: result.durationMs,
         tokens: { input: usage?.prompt_tokens ?? 0, output: usage?.completion_tokens ?? 0 },
       });
       receipt.fired('L1');
-      success = response;
-      break;
-    } catch (err) {
-      const totalMs = Date.now() - startedAt;
-      const error = parseError(err);
-      receipt.recordProvider({
-        name: currentModel,
-        via: 'tf',
-        outcome: 'error',
-        error,
-        ttft_ms: null,
-        total_ms: totalMs,
-      });
-      lastError = error;
-
-      // L4 — classify the error and decide whether to retry with an alternate.
-      const match = classifyError(error, currentModel);
-      if (match) {
-        receipt.setL4Match(match); // also backfills message_class on the last provider entry
-        if (match.action_taken === 'fallback_provider' && attempt < MAX_L4_FALLBACKS) {
-          const target = pickFallbackTarget(currentModel, triedModels);
-          if (target) {
-            currentModel = target;
-            continue;
-          }
-        }
-      }
+      success = result.response;
       break;
     }
+
+    const error = parseError(result.error);
+    receipt.recordProvider({
+      name: currentModel,
+      via: result.via,
+      outcome: 'error',
+      error,
+      ttft_ms: null,
+      total_ms: result.durationMs,
+    });
+    lastError = error;
+
+    // L4 — classify the error and decide whether to retry with an alternate.
+    const match = classifyError(error, currentModel);
+    if (match) {
+      receipt.setL4Match(match); // also backfills message_class on the last provider entry
+      if (match.action_taken === 'fallback_provider' && attempt < MAX_L4_FALLBACKS) {
+        const target = pickFallbackTarget(currentModel, triedModels);
+        if (target) {
+          currentModel = target;
+          continue;
+        }
+      }
+    }
+    break;
   }
+
+  receipt.setTFHealth({ reachable: !bypassUsedAny, bypass_used: bypassUsedAny });
 
   if (success) {
     return c.json({ ...success, _aegis_receipt: receipt.build() });

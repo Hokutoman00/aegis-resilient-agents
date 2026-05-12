@@ -14,6 +14,9 @@ const EnvSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   GOOGLE_API_KEY: z.string().optional(),
+  // Override default API base for the direct OpenAI client (e.g. Azure or proxy)
+  OPENAI_DIRECT_BASE_URL: z.string().url().optional(),
+  ANTHROPIC_DIRECT_BASE_URL: z.string().url().optional(),
 
   // Chaos toggles (Aegis 自作 L6)
   CHAOS_PRIMARY_DOWN: z.string().optional(),

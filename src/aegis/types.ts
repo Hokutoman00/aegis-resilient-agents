@@ -27,3 +27,9 @@ export interface Contract {
 }
 
 export type LayerFired = 'L0' | 'L1' | 'L2' | 'L3' | 'L4' | 'L5' | 'L6';
+
+export interface TFHealthRecord {
+  reachable: boolean;
+  bypass_used: boolean;
+  last_heartbeat_ms?: number;
+}
