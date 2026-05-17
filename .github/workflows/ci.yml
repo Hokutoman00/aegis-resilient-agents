@@ -34,7 +34,9 @@ jobs:
 
       - name: Server boot smoke
         env:
-          TRUEFOUNDRY_API_KEY: smoke-test-not-real
+          # Placeholder must satisfy config.ts Zod validation
+          # (TRUEFOUNDRY_API_KEY: min 20 chars). We never actually call TF in CI.
+          TRUEFOUNDRY_API_KEY: smoke-test-placeholder-not-a-real-token-just-for-ci-boot
           TRUEFOUNDRY_OPENAI_BASE: https://example.invalid/v1
         run: |
           PORT=3000 bun run src/server/index.ts &
